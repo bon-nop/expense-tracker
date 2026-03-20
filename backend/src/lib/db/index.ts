@@ -3,11 +3,17 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { groups, members, expenses } from "./schema";
 
-// Connection string for Supabase
-const connectionString = Bun.env.SUPABASE_DB_URL || 
-  `postgresql://postgres:${Bun.env.SUPABASE_SERVICE_KEY}@db.hdowzeobfgeekigrdgjt.supabase.co:5432/postgres`;
+// Use SUPABASE_DB_URL if available
+const connectionString = Bun.env.SUPABASE_DB_URL;
 
-const client = postgres(connectionString);
+if (!connectionString) {
+  console.error("SUPABASE_DB_URL is not set!");
+}
+
+const client = postgres(connectionString || "", {
+  ssl: true,
+  connect_timeout: 10,
+});
 export const db = drizzle(client, { schema: { groups, members, expenses } });
 
 export { groups, members, expenses };

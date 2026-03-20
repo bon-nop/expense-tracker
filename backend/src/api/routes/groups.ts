@@ -1,57 +1,74 @@
 // filepath: backend/src/api/routes/groups.ts
 import { Elysia, t } from "elysia";
-import { db, groups, members, expenses } from "../../lib/db";
-import { eq, and } from "drizzle-orm";
+import { supabase } from "../../lib/supabase-client";
 
 export const groupsRoutes = new Elysia({ prefix: "/groups" })
   // GET /groups - List all groups
   .get("/", async ({ query }) => {
     const userId = query.userId as string | undefined;
-    
-    let queryBuilder = db.select().from(groups);
-    
+
     // If userId provided, filter by groups where user is a member
     if (userId) {
-      queryBuilder = db
-        .select({ group: groups })
-        .from(groups)
-        .innerJoin(members, eq(groups.id, members.groupId))
-        .where(eq(members.userId, userId));
-      
-      const userGroups = await queryBuilder;
-      return userGroups.map(g => g.group);
+      const { data: memberGroups } = await supabase
+        .from("members")
+        .select("group_id")
+        .eq("user_id", userId);
+
+      if (!memberGroups || memberGroups.length === 0) {
+        return [];
+      }
+
+      const groupIds = memberGroups.map((m) => m.group_id);
+      const { data, error } = await supabase
+        .from("groups")
+        .select("*")
+        .in("id", groupIds)
+        .order("created_at", { ascending: false });
+
+      return error ? { error: error.message } : data;
     }
-    
-    return await queryBuilder.orderBy(groups.createdAt);
+
+    // Return all groups
+    const { data, error } = await supabase
+      .from("groups")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    return error ? { error: error.message } : data;
   })
-  
-  // GET /groups/:id - Get a specific group
-  .get("/:id", async ({ params: { id } }) => {
-    const result = await db.select().from(groups).where(eq(groups.id, id)).limit(1);
-    return result[0] || { error: "Group not found" };
+
+  // GET /groups/:groupId - Get a specific group
+  .get("/:groupId", async ({ params: { groupId } }) => {
+    const { data, error } = await supabase
+      .from("groups")
+      .select("*")
+      .eq("id", groupId)
+      .single();
+    return error ? { error: error.message } : data;
   })
-  
+
   // POST /groups - Create a new group
   .post(
     "/",
     async ({ body }) => {
       const { name, createdBy } = body as { name: string; createdBy: string };
-      
+
       // Create the group
-      const [group] = await db
-        .insert(groups)
-        .values({
-          name,
-          createdBy,
-        })
-        .returning();
-      
+      const { data: group, error: groupError } = await supabase
+        .from("groups")
+        .insert({ name, created_by: createdBy })
+        .select()
+        .single();
+
+      if (groupError) {
+        return { error: groupError.message };
+      }
+
       // Add creator as a member
-      await db.insert(members).values({
-        groupId: group.id,
-        userId: createdBy,
-      });
-      
+      await supabase
+        .from("members")
+        .insert({ group_id: group.id, user_id: createdBy });
+
       return group;
     },
     {
@@ -59,13 +76,13 @@ export const groupsRoutes = new Elysia({ prefix: "/groups" })
         name: t.String(),
         createdBy: t.String(),
       }),
-    }
+    },
   )
-  
-  // DELETE /groups/:id - Delete a group
-  .delete("/:id", async ({ params: { id } }) => {
-    await db.delete(groups).where(eq(groups.id, id));
-    return { success: true };
+
+  // DELETE /groups/:groupId - Delete a group
+  .delete("/:groupId", async ({ params: { groupId } }) => {
+    const { error } = await supabase.from("groups").delete().eq("id", groupId);
+    return error ? { error: error.message } : { success: true };
   });
 
 export default groupsRoutes;
